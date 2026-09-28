@@ -2,69 +2,156 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>P2P Root Controller</title>
-    <!-- Free public PeerJS CDN -->
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NetShell Web Terminal</title>
+    <!-- Xterm.js CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
     <style>
-        body { font-family: monospace; background: #0d1117; color: #58a6ff; padding: 20px; }
-        .box { background: #161b22; border: 1px solid #30363d; padding: 20px; border-radius: 6px; max-width: 700px; margin: auto; }
-        input, button { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 10px; margin: 5px 0; border-radius: 4px; }
-        button { cursor: pointer; background: #238636; color: white; border: none; }
-        button:hover { background: #2ea043; }
-        pre { background: #0d1117; padding: 15px; border: 1px solid #30363d; height: 250px; overflow-y: scroll; color: #7ee787; }
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000000;
+            overflow: hidden;
+            font-family: monospace;
+        }
+        #terminal-container {
+            width: 100%;
+            height: 100%;
+            padding: 10px;
+            box-sizing: border-box;
+        }
     </style>
 </head>
 <body>
-    <div class="box">
-        <h2>Android Root P2P Dashboard</h2>
-        <p>Status: <span id="status" style="color: #f85149;">Waiting for connection...</span></p>
-        <div>
-            <input type="text" id="targetId" placeholder="Enter Android Peer ID" style="width: 70%;">
-            <button onclick="connectToPhone()">Connect</button>
-        </div>
-        <br>
-        <div>
-            <input type="text" id="commandInput" placeholder="Enter root command (e.g., ls -la)" style="width: 75%;">
-            <button onclick="sendCommand()">Execute</button>
-        </div>
-        <h3>Output Log:</h3>
-        <pre id="outputLog">Dashboard ready. Waiting for phone ID...</pre>
-    </div>
+
+    <div id="terminal-container"></div>
+
+    <!-- Xterm.js Core & Fit Addon -->
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 
     <script>
-        let peer = new Peer(); // Connects to free public PeerJS cloud
-        let conn;
-        const log = (msg) => { document.getElementById('outputLog').innerText += "\n" + msg; };
-
-        peer.on('open', (id) => {
-            log("Browser Dashboard ID: " + id);
-        });
-
-        function connectToPhone() {
-            const id = document.getElementById('targetId').value;
-            log("Connecting to phone ID: " + id + "...");
-            conn = peer.connect(id);
-
-            conn.on('open', () => {
-                document.getElementById('status').style.color = "#3fb950";
-                document.getElementById('status').innerText = "Connected directly to phone!";
-                log("P2P Data channel active.");
-            });
-
-            conn.on('data', (data) => {
-                log("Response:\n" + data);
-            });
+        // 1. Prompt user for the active Cloudflare Tunnel URL
+        let serverUrl = prompt("Enter your Cloudflare Tunnel URL (e.g., https://xxx.trycloudflare.com):");
+        if (serverUrl) {
+            serverUrl = serverUrl.trim().replace(/\/$/, ""); // Remove trailing slash
         }
 
-        function sendCommand() {
-            const cmd = document.getElementById('commandInput',).value;
-            if (conn && conn.open) {
-                log("> " + cmd);
-                conn.send(cmd);
-                document.getElementById('commandInput').value = "";
-            } else {
-                alert("Connection is not active!");
+        // 2. Initialize Xterm.js Terminal
+        const term = new Terminal({
+            cursorBlink: true,
+            theme: {
+                background: '#000000',
+                foreground: '#00FF00',
+                cursor: '#00FF00',
+                selectionBackground: 'rgba(0, 255, 0, 0.3)'
+            },
+            fontFamily: 'Consolas, "Courier New", monospace',
+            fontSize: 14
+        });
+
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+
+        const container = document.getElementById('terminal-container');
+        term.open(container);
+        fitAddon.fit();
+
+        window.addEventListener('resize', () => fitAddon.fit());
+
+        if (!serverUrl) {
+            term.writeln("\x1b[31m[!] Error: No server URL provided. Refresh page to try again.\x1b[0m");
+        } else {
+            term.writeln(`\x1b[32mNetShell Web v1.0 - Connected to: ${serverUrl}\x1b[0m`);
+            term.writeln("Type commands below. They will be queued and executed on the device.\r\n");
+            term.write("$ ");
+        }
+
+        let currentInput = "";
+
+        // 3. Handle Keyboard Input (SSH-like interactive feel)
+        term.onKey(({ key, domEvent }) => {
+            if (!serverUrl) return;
+
+            const printable = !domEvent.altKey && !domEvent.ctrlKey && !domEvent.metaKey;
+
+            if (domEvent.keyCode === 13) { // Enter key
+                term.writeln('');
+                const cmd = currentInput.trim();
+                currentInput = "";
+
+                if (cmd.length > 0) {
+                    executeRemoteCommand(serverUrl, cmd);
+                } else {
+                    term.write("$ ");
+                }
+            } else if (domEvent.keyCode === 8) { // Backspace
+                if (currentInput.length > 0) {
+                    currentInput = currentInput.slice(0, -1);
+                    term.write('\b \b');
+                }
+            } else if (printable) {
+                currentInput += key;
+                term.write(key);
             }
+        });
+
+        // 4. API Communication Loop (Push & Poll Result)
+        async function executeRemoteCommand(baseUrl, command) {
+            try {
+                term.writeln("\x1b[90m[Sending command to queue...]\x1b[0m");
+                
+                // Step A: Push command to server
+                let pushRes = await fetch(`${baseUrl}/api/push`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: command })
+                });
+
+                if (!pushRes.ok) {
+                    term.writeln(`\x1b[31m[!] Failed to push command (HTTP ${pushRes.status})\x1b[0m\n$ `);
+                    return;
+                }
+
+                term.writeln("\x1b[90m[Waiting for device execution...]\x1b[0m");
+
+                // Step B: Poll for output until it's populated (timeout after 20s)
+                let attempts = 0;
+                let outputFound = false;
+
+                while (attempts < 20 && !outputFound) {
+                    await new Promise(r => setTimeout(r, 1000)); // wait 1s per poll
+                    
+                    try {
+                        let outRes = await fetch(`${baseUrl}/api/output`);
+                        let outJson = await outRes.json();
+
+                        if (outJson.result !== null && outJson.result !== undefined) {
+                            outputFound = true;
+                            // Clean line breaks for proper terminal rendering
+                            let formattedOutput = outJson.result.replace(/\n/g, '\r\n');
+                            term.write(formattedOutput);
+                            if (!formattedOutput.endsWith('\r\n')) {
+                                term.writeln('');
+                            }
+                        }
+                    } catch (err) {
+                        // Network jitter during polling can be retried
+                    }
+                    attempts++;
+                }
+
+                if (!outputFound) {
+                    term.writeln("\x1b[33m[!] Timeout: Device did not respond or poll output was null.\x1b[0m");
+                }
+
+            } catch (error) {
+                term.writeln(`\x1b[31m[!] Network Error: ${error.message}\x1b[0m`);
+            }
+
+            term.write("$ ");
         }
     </script>
 </body>
