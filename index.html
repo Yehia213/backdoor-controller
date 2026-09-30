@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NetShell Web Terminal</title>
-    <!-- Include Xterm.js CSS CDN for authentic terminal look & feel -->
+    <!-- Include Xterm.js CSS and Fit Addon CSS CDN -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
     <style>
         body {
@@ -12,20 +12,21 @@
             color: #f0f0f0;
             font-family: Menlo, Monaco, "Courier New", Courier, monospace;
             margin: 0;
-            padding: 20px;
+            padding: 10px;
             display: flex;
             flex-direction: column;
             height: 100vh;
             box-sizing: border-box;
+            overflow: hidden;
         }
         /* Top Right Font Controls */
         .controls {
             position: fixed;
-            top: 15px;
-            right: 20px;
+            top: 10px;
+            right: 15px;
             z-index: 1000;
             background: rgba(30, 30, 30, 0.85);
-            padding: 5px 10px;
+            padding: 4px 8px;
             border-radius: 4px;
             border: 1px solid #333;
             backdrop-filter: blur(4px);
@@ -34,23 +35,23 @@
             background: #2d2d2d;
             color: #fff;
             border: 1px solid #444;
-            padding: 4px 10px;
+            padding: 2px 8px;
             cursor: pointer;
             font-weight: bold;
             border-radius: 3px;
-            font-size: 14px;
+            font-size: 13px;
         }
         .controls button:hover {
             background: #3c3c3c;
         }
         .controls span {
-            margin: 0 6px;
-            font-size: 12px;
+            margin: 0 4px;
+            font-size: 11px;
             color: #888;
         }
         #status-bar {
-            margin-bottom: 10px;
-            font-size: 13px;
+            margin-bottom: 6px;
+            font-size: 12px;
             color: #888;
         }
         #terminal-container {
@@ -58,31 +59,8 @@
             background-color: #000000;
             border: 1px solid #2b2b2b;
             border-radius: 6px;
-            padding: 12px;
-            overflow: hidden; /* Xterm manages its own scrolling viewport */
-        }
-        .input-line {
-            display: flex;
-            margin-top: 10px;
-            background-color: #1e1e1e;
-            border: 1px solid #333;
-            border-radius: 4px;
-            padding: 8px 12px;
-            align-items: center;
-        }
-        .prompt {
-            color: #4ec9b0;
-            font-weight: bold;
-            margin-right: 8px;
-        }
-        #command-input {
-            flex-grow: 1;
-            background: transparent;
-            border: none;
-            color: #d4d4d4;
-            font-family: inherit;
-            font-size: 14px;
-            outline: none;
+            padding: 8px;
+            overflow: hidden;
         }
     </style>
 </head>
@@ -97,24 +75,19 @@
 
     <div id="status-bar">Initializing NetShell Bridge...</div>
     
-    <!-- Xterm Viewport Wrapper -->
+    <!-- Fullscreen Xterm Viewport Wrapper -->
     <div id="terminal-container"></div>
 
-    <div class="input-line">
-        <span class="prompt">$</span>
-        <input type="text" id="command-input" placeholder="Type a command and press Enter..." autofocus autocomplete="off">
-    </div>
-
-    <!-- Include Xterm.js Core Library CDN -->
+    <!-- Include Xterm.js Core & Fit Addon CDNs -->
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
     <script>
         const GIST_URL = "https://raw.githubusercontent.com/Yehia213/backdoor/main/api.txt";
         let BASE_URL = "";
         
         const statusBar = document.getElementById('status-bar');
-        const commandInput = document.getElementById('command-input');
 
-        // Initialize genuine Xterm instance
+        // Initialize genuine Xterm instance & FitAddon
         const term = new Terminal({
             cursorBlink: true,
             theme: {
@@ -127,7 +100,16 @@
             fontFamily: 'Menlo, Monaco, "Courier New", Courier, monospace'
         });
 
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+
         term.open(document.getElementById('terminal-container'));
+        fitAddon.fit();
+
+        // Handle auto-resizing on window size changes
+        window.addEventListener('resize', () => {
+            fitAddon.fit();
+        });
 
         let currentFontSize = 14;
         function adjustFontSize(delta) {
@@ -135,6 +117,7 @@
             if (currentFontSize < 10) currentFontSize = 10;
             if (currentFontSize > 28) currentFontSize = 28;
             term.options.fontSize = currentFontSize;
+            fitAddon.fit();
         }
 
         async function initServerConnection() {
@@ -147,6 +130,7 @@
                     if (BASE_URL.startsWith('http')) {
                         statusBar.textContent = `Connected to: ${BASE_URL}`;
                         term.writeln("\x1b[32m[+] Successfully linked via GitHub api.txt\x1b[0m");
+                        startInteractiveShell();
                         startPollingOutput();
                         return;
                     }
@@ -161,6 +145,7 @@
                 BASE_URL = manualUrl.trim().replace(/\/$/, '');
                 statusBar.textContent = `Connected manually to: ${BASE_URL}`;
                 term.writeln("\x1b[32m[+] Connected via manual input\x1b[0m");
+                startInteractiveShell();
                 startPollingOutput();
             } else {
                 statusBar.textContent = "Error: No valid server URL provided.";
@@ -168,27 +153,52 @@
             }
         }
 
-        // Send command on Enter
-        commandInput.addEventListener('keypress', async function (e) {
-            if (e.key === 'Enter' && BASE_URL) {
-                let cmd = commandInput.value.trim();
-                if (!cmd) return;
+        // Setup Fully Interactive Xterm Input Handling
+        let currentLine = "";
+        function startInteractiveShell() {
+            promptUser();
+
+            term.onData(async (data) => {
+                if (!BASE_URL) return;
                 
-                commandInput.value = '';
-                term.writeln(`\x1b[36m$ ${cmd}\x1b[0m`);
+                const charCode = data.charCodeAt(0);
 
-                try {
-                    await fetch(`${BASE_URL}/api/push`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ command: cmd })
-                    });
-                } catch (err) {
-                    term.writeln(`\x1b[31m[!] Error pushing command to server.\x1b[0m`);
+                if (charCode === 13) { // Enter key
+                    term.writeln('');
+                    let cmd = currentLine.trim();
+                    currentLine = "";
+
+                    if (cmd.length > 0) {
+                        try {
+                            await fetch(`${BASE_URL}/api/push`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ command: cmd })
+                            });
+                        } catch (err) {
+                            term.writeln(`\x1b[31m[!] Error pushing command to server.\x1b[0m`);
+                            promptUser();
+                        }
+                    } else {
+                        promptUser();
+                    }
+                } else if (charCode === 127) { // Backspace
+                    if (currentLine.length > 0) {
+                        currentLine = currentLine.slice(0, -1);
+                        term.write('\b \b');
+                    }
+                } else if (charCode >= 32) { // Printable characters
+                    currentLine += data;
+                    term.write(data);
                 }
-            }
-        });
+            });
+        }
 
+        function promptUser() {
+            term.write('\x1b[36m$ \x1b[0m');
+        }
+
+        let lastHandledOutput = "";
         // Poll for command outputs from the server
         function startPollingOutput() {
             setInterval(async () => {
@@ -197,17 +207,21 @@
                     let res = await fetch(`${BASE_URL}/api/output`);
                     if (res.ok) {
                         let data = await res.json();
-                        if (data.result && data.result !== window.lastOutput) {
-                            window.lastOutput = data.result;
-                            // Clean up line breaks for proper xterm carriage rendering
+                        if (data.result && data.result !== lastHandledOutput) {
+                            lastHandledOutput = data.result;
+                            
+                            // Clear current typed line buffer momentarily to print command results cleanly
+                            term.write('\r\x1b[K'); 
                             let formattedOutput = data.result.replace(/\n/g, '\r\n');
                             term.writeln(formattedOutput);
+                            promptUser();
+                            if (currentLine) term.write(currentLine);
                         }
                     }
                 } catch (e) {
                     // Silent polling error retry
                 }
-            }, 2000);
+            }, 1500);
         }
 
         // Run initialization on page load
